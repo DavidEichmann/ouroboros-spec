@@ -42,7 +42,6 @@
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures             #-}
-{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE NoMonomorphismRestriction  #-}
@@ -51,7 +50,6 @@
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeOperators              #-}
 
 {-# OPTIONS_GHC -Wall #-}
@@ -175,6 +173,7 @@ import           Control.Monad
 import           Control.Monad.State.Class
 import           Data.Bifunctor            (first, second)
 import           Data.Bits                 (xor)
+import           Data.Either               (isRight)
 import           Data.Foldable             (fold, asum)
 import           Data.List                 (maximumBy, intercalate, foldl', inits)
 import           Data.Map.Strict           (Map)
@@ -442,7 +441,7 @@ publicKey (PrivateKey k) = PublicKey k
 \end{code}
 %endif
 %
-(but not the other way around). We can encrypt a value with a public key
+(but not the other way around). We can encrypt a value with a public key.
 %
 \begin{codegroup}
 \begin{code}
@@ -464,7 +463,7 @@ encryptWith = EncryptedWith
 %endif
 \end{codegroup}
 %
-and sign it with a private key
+and sign it with a private key (implements the $\mathcal{F}_{KES}$ "Sign and Update" functionality \cite[A.6]{genesis})
 %
 \begin{codegroup}
 \begin{code}
@@ -495,6 +494,12 @@ with corresponding ``inverse'' functions
 decryptWith     :: Encrypted  a -> PrivateKey -> Maybe a
 stripSignature  :: Signed     a -> (PublicKey, a)
 \end{code}
+%
+And signature verification function (??? implements the $\mathcal{F}_{KES}$ "Signature Verificaiton" functionality \cite[A.6]{genesis}).
+%
+\begin{code}
+verifySignature :: PublicKey -> Signed a -> Bool
+\end{code}
 
 %if style == newcode
 \begin{code}
@@ -505,6 +510,8 @@ decryptWith EncryptedWith{..} k =
 
 stripSignature SignedWith{..} =
     (publicKey signedKey, signedValue)
+
+verifySignature verificationKey SignedWith{..} = verificationKey `matchesKey` signedKey
 
 matchesKey :: PublicKey -> PrivateKey -> Bool
 matchesKey (PublicKey key) (PrivateKey key') = key == key'
@@ -1191,7 +1198,7 @@ epochLength = 10
 %endif
 \end{codegroup}
 %
-allowing us to define
+llowing us to define
 %
 \begin{codegroup}
 \begin{code}
@@ -1325,7 +1332,7 @@ deriving instance Ord       RelativeStake
 %endif
 \end{codegroup}
 
-Given a stake distribution we can compute the relative stake for a particular stakeholder
+Given a stake distribution we can compute the relative stake for a particular stakeholder (see \cite[Section 3.3.3]{genesis}
 %
 \begin{codegroup}
 \begin{code}
@@ -1384,7 +1391,7 @@ applyTransaction Transaction{..} (StakeDistr distr) = StakeDistr $
     reduceFrom Nothing    = Just (-1 * transactionStake)
     reduceFrom (Just n)   = Just (n - transactionStake)
 
-    incrementTo Nothing   = Just (transactionStake)
+    incrementTo Nothing   = Just transactionStake
     incrementTo (Just n)  = Just (n + transactionStake)
 \end{code}
 %endif
@@ -1434,7 +1441,8 @@ We distinguish between an \emph{unsigned block} (a block without a signature, a
 concept not explicitly present in the Praos paper) and a signed block; since the
 latter corresponds to the concept of a block in the paper, we will refer to a
 signed block as simply a |Block|.
-Blocks are described in \cite[section 3.1]{genesis} as $B = (h, \texttt{st}, \texttt{sl}, crt, \rho, \sigma)$. and are related as follows for a block $b$:
+Blocks are described in \cite[section 3.1]{genesis} as $B = (h, \texttt{st}, \texttt{sl}, crt, \rho, \sigma)$.
+
 %
 \begin{codegroup}
 \begin{code}
@@ -1446,7 +1454,7 @@ data UnsignedBlock = Block {
   ,  blockNonce  :: (Seed, VrfProof)    -- $\rho = (y_\rho, \pi_\rho)$
   }
 
-type Block = Signed UnsignedBlock
+type Block = Signed UnsignedBlock       -- $\sigma$
 \end{code}
 %if style == newcode
 \begin{code}
@@ -1518,6 +1526,13 @@ applyBlock block Genesis{..} = Genesis {
 %endif
 \end{codegroup}
 
+\todo[inline]{Should the output of applyBlock really be Genesis or should we have a new type for this
+to indicate that it is not the genesis block at the start of the block chain?}
+\todo[inline]{genesisNonce corresponds to the epoch, $ep$, randomness $\eta$, but the paper describes
+this as: $\eta_{ep} \leftarrow H(\eta_{ep−1} \parallel ep \parallel v)$ where $v$ is the concatenation of the VRF outputs $y_\rho$
+from all blocks in $C_{loc}$ from the first $2R/3$ slots of epoch $ep − 1$. This code seems to suggest that \emph{all}
+blocks are used, not just the first $2R/3$ of the epoch.}
+
 \subsection{Blockchain}
 
 A blockchain is simply a list of blocks
@@ -1579,6 +1594,11 @@ applyBlockChain = repeatedly applyBlock
 A stakeholder can ask if they are a slot leader for any given nonce, stake
 distribution, and slot number (note that stakeholders can only check this
 for themselves, not for other stakeholders):
+
+\todo[inline]{The use of VRF for leader selection is different from the papaer as described in \cite[3.3.3]{genesis}.}
+\todo[inline]{Here the Genesis block is not necessarily the initial genesis block. It is the gnesis block from this epoch?
+This seems quite different from the paper. All we need from the Genesis parameter is the genesisNonce which corresponds to
+$\eta_ep$ for the current epoch $ep$.}
 
 \begin{code}
 askIsLeader :: Genesis -> SlotNumber -> PrivateKey -> Maybe VrfProof
@@ -1772,7 +1792,7 @@ verifyCwcHead Append{..} = do
     prev                 = hash <$> cwcHead cwcPrevious
 
 isValidCwcHead :: ChainWithContext -> Bool
-isValidCwcHead = either (const False) (const True) . verifyCwcHead
+isValidCwcHead = isRight . verifyCwcHead
 \end{code}
 %
 where the verification of the block VRF is a key component:
@@ -1799,13 +1819,13 @@ verifyCwc Empty{}       = return ()
 verifyCwc c@Append{..}  = verifyCwcHead c >> verifyCwc cwcPrevious
 
 isValidCwc :: ChainWithContext -> Bool
-isValidCwc = either (const False) (const True) . verifyCwc
+isValidCwc = isRight . verifyCwc
 
 verifyChain :: Genesis -> Blockchain -> Either VerificationFailure ()
 verifyChain genesis = verifyCwc . chainWithContext genesis
 
 isValidChain :: Genesis -> Blockchain -> Bool
-isValidChain g = either (const False) (const True) . verifyChain g
+isValidChain g = isRight . verifyChain g
 \end{code}
 %
 
