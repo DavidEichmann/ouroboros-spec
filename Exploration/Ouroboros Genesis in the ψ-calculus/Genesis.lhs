@@ -518,6 +518,82 @@ matchesKey (PublicKey key) (PrivateKey key') = key == key'
 \end{code}
 %endif
 
+\subsection{Key Evolving Scheme (KES)}
+
+See $\mathcal{F}_{KES}$ \cite[A.3 Definition 15]{praos}. A KES is a tuple of algorithms
+$(Gen, Sign, Verify, Update)$. This is a scheme where ``the public key is fixed, but the 
+secret signing key is updated at regular intervals so as to provide a forward security
+property: compromise of the current secret key does not enable an adversary to forge
+signatures pertaining to the past." \cite{kes}.
+%
+\begin{codegroup}
+\begin{code}
+newtype SecurityParameter
+\end{code}
+%if style == newcode
+\begin{code}
+  = SecurityParameter Integer     -- TODO $1^k$
+\end{code}
+%endif
+\begin{code}
+newtype TimePeriod
+\end{code}
+%if style == newcode
+\begin{code}
+  = TimePeriod { unTimePeriod :: Integer }
+\end{code}
+%endif
+\begin{code}
+newtype PublicKeyKes
+\end{code}
+%if style == newcode
+\begin{code}
+  = PublicKeyKes { pukkNonce :: Integer }
+\end{code}
+%endif
+\begin{code}
+data PrivateKeyKes
+\end{code}
+%if style == newcode
+\begin{code}
+  = PrivateKeyKes { prkkTime :: TimePeriod, prkkNonce :: Integer }
+\end{code}
+%endif
+\begin{code}
+data SignatureKes a
+\end{code}
+%if style == newcode
+\begin{code}
+  = SignatureKes { sigkPrivateKey :: PrivateKeyKes, sigkMessage :: a }
+\end{code}
+%endif
+\end{codegroup}
+%
+Note the the functions that take an $StdGen$ are probabalistic.
+%
+\begin{codegroup}
+\begin{code}
+kesGen :: StdGen -> SecurityParameter -> TimePeriod -> (StdGen, PublicKeyKes, PrivateKeyKes)
+kesSign :: StdGen -> PrivateKeyKes -> a -> (StdGen, SignatureKes a)
+kesVerify :: Eq a => PublicKeyKes -> a -> SignatureKes a -> Bool
+kesUpdate :: StdGen -> PrivateKeyKes -> (StdGen, PrivateKeyKes)
+\end{code}
+%if style == newcode
+\begin{code}
+deriving instance Eq SecurityParameter
+deriving instance Eq TimePeriod
+deriving instance Num TimePeriod
+kesGen gen sp maxTime = let (nonce, gen') = random gen in (gen', PublicKeyKes nonce, PrivateKeyKes 0 nonce)
+kesSign gen prkk a = (gen, SignatureKes prkk a)
+kesVerify PublicKeyKes{..} msg SignatureKes{..}
+  = pukkNonce == prkkNonce sigkPrivateKey
+  && msg == sigkMessage
+  -- \text{\&\& prkkTime sigkPrivateKey == prkkTime sigkPrivateKey  -- This is implicitly True for this representation}
+kesUpdate gen k = (gen, k { prkkTime = prkkTime k + 1 })
+\end{code}
+%endif
+\end{codegroup}
+
 \subsection{Verifiable Random Function (VRF)}
 
 A pseudo-random number generator needs a |Seed| as input
